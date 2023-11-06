@@ -297,7 +297,7 @@ std::unique_ptr<ACCL::BaseBuffer> create_buffer(ACCL::ACCL &accl,
                                 acclDatatype.at(tensor.scalar_type()));
 
     ACCL::debug("Creating int32 buffer at 0x" +
-                ACCL::debug_hex(buffer->physical_address()) + " of " +
+                ACCL::debug_hex(buffer->address()) + " of " +
                 std::to_string(buffer->size()) + "B.");
     break;
   case at::kLong:
@@ -306,7 +306,7 @@ std::unique_ptr<ACCL::BaseBuffer> create_buffer(ACCL::ACCL &accl,
                                 acclDatatype.at(tensor.scalar_type()));
 
     ACCL::debug("Creating int64 buffer at 0x" +
-                ACCL::debug_hex(buffer->physical_address()) + " of " +
+                ACCL::debug_hex(buffer->address()) + " of " +
                 std::to_string(buffer->size()) + "B.");
     break;
   case at::kFloat:
@@ -315,7 +315,7 @@ std::unique_ptr<ACCL::BaseBuffer> create_buffer(ACCL::ACCL &accl,
                                 acclDatatype.at(tensor.scalar_type()));
 
     ACCL::debug("Creating float32 buffer at 0x" +
-                ACCL::debug_hex(buffer->physical_address()) + " of " +
+                ACCL::debug_hex(buffer->address()) + " of " +
                 std::to_string(buffer->size()) + "B.");
 
     break;
@@ -325,7 +325,7 @@ std::unique_ptr<ACCL::BaseBuffer> create_buffer(ACCL::ACCL &accl,
                                 acclDatatype.at(tensor.scalar_type()));
 
     ACCL::debug("Creating float64 buffer at 0x" +
-                ACCL::debug_hex(buffer->physical_address()) + " of " +
+                ACCL::debug_hex(buffer->address()) + " of " +
                 std::to_string(buffer->size()) + "B.");
     break;
   default:
@@ -650,7 +650,7 @@ void ProcessGroupACCL::runLoop() {
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupACCL::enqueue(
+c10::intrusive_ptr<Work> ProcessGroupACCL::enqueue(
     std::unique_ptr<WorkEntry> entry, const char *profilingTitle, OpType optype,
     const c10::optional<std::vector<at::Tensor>> &inputTensors) {
   auto work = c10::make_intrusive<WorkACCL>(entry->dst, profilingTitle, optype,
@@ -711,7 +711,7 @@ void ProcessGroupACCL::run_broadcast(at::Tensor tensor_original,
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::broadcast(std::vector<at::Tensor> &tensors,
                             const BroadcastOptions &opts) {
   checkSingleTensor(tensors);
@@ -796,7 +796,7 @@ void ProcessGroupACCL::run_allreduce(at::Tensor tensor_original,
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::allreduce(std::vector<at::Tensor> &tensors,
                             const AllreduceOptions &opts) {
   checkSingleTensor(tensors);
@@ -821,7 +821,7 @@ ProcessGroupACCL::allreduce(std::vector<at::Tensor> &tensors,
                  c10::optional<std::vector<at::Tensor>>(tensors));
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::allreduce_coalesced(std::vector<at::Tensor> &tensors,
                                       const AllreduceCoalescedOptions &opts) {
   TORCH_CHECK(false,
@@ -893,7 +893,7 @@ void ProcessGroupACCL::run_reduce(at::Tensor tensor_original,
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::reduce(std::vector<at::Tensor> &tensors,
                          const ReduceOptions &opts) {
   checkSingleTensor(tensors);
@@ -990,7 +990,7 @@ void ProcessGroupACCL::run_allgather(
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::allgather(std::vector<std::vector<at::Tensor>> &outputTensors,
                             std::vector<at::Tensor> &inputTensors,
                             const AllgatherOptions &opts) {
@@ -1033,7 +1033,7 @@ ProcessGroupACCL::allgather(std::vector<std::vector<at::Tensor>> &outputTensors,
                  c10::optional<std::vector<at::Tensor>>(inputTensors));
 }
 
-c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupACCL::allgather_coalesced(
+c10::intrusive_ptr<Work> ProcessGroupACCL::allgather_coalesced(
     std::vector<std::vector<at::Tensor>> & /* unused */,
     std::vector<at::Tensor> & /* unused */,
     const AllgatherOptions & /* unused */) {
@@ -1117,7 +1117,7 @@ void ProcessGroupACCL::run_gather(at::Tensor srctensor_original,
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::gather(std::vector<std::vector<at::Tensor>> &outputTensors,
                          std::vector<at::Tensor> &inputTensors,
                          const GatherOptions &opts) {
@@ -1242,6 +1242,7 @@ void ProcessGroupACCL::run_scatter(std::vector<at::Tensor> &srctensorvec,
   // Run scatter
   ACCL::debug("Starting scatter of " + std::to_string(dsttensor->numel()) +
               " items");
+
   accl->scatter(*srcdata, *dstdata, dsttensor->numel(), opts.rootRank,
                 ACCL::GLOBAL_COMM, false, false,
                 get_compressed_type(dsttensor->scalar_type()));
@@ -1260,7 +1261,7 @@ void ProcessGroupACCL::run_scatter(std::vector<at::Tensor> &srctensorvec,
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::scatter(std::vector<at::Tensor> &outputTensors,
                           std::vector<std::vector<at::Tensor>> &inputTensors,
                           const ScatterOptions &opts) {
@@ -1323,21 +1324,21 @@ ProcessGroupACCL::scatter(std::vector<at::Tensor> &outputTensors,
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupACCL::reduce_scatter(
+c10::intrusive_ptr<Work> ProcessGroupACCL::reduce_scatter(
     std::vector<at::Tensor> &outputTensors,
     std::vector<std::vector<at::Tensor>> &inputTensors,
     const ReduceScatterOptions &opts) {
   TORCH_CHECK(false, "ProcessGroupACCL does not support reduce_scatter");
 }
 
-c10::intrusive_ptr<ProcessGroup::Work> ProcessGroupACCL::alltoall_base(
+c10::intrusive_ptr<Work> ProcessGroupACCL::alltoall_base(
     at::Tensor &outputTensor, at::Tensor &inputTensor,
     std::vector<int64_t> &outputSplitSizes,
     std::vector<int64_t> &inputSplitSizes, const AllToAllOptions &opts) {
   TORCH_CHECK(false, "ProcessGroupACCL does not support alltoall_base");
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::alltoall(std::vector<at::Tensor> &outputTensors,
                            std::vector<at::Tensor> &inputTensors,
                            const AllToAllOptions &opts) {
@@ -1385,7 +1386,7 @@ void ProcessGroupACCL::run_send(at::Tensor tensor_original, int dstRank,
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::send(std::vector<at::Tensor> &tensors, int dstRank, int tag) {
   checkSingleTensor(tensors);
 
@@ -1458,7 +1459,7 @@ void ProcessGroupACCL::run_recv(at::Tensor tensor_original, int srcRank,
   }
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::recv(std::vector<at::Tensor> &tensors, int srcRank, int tag) {
   checkSingleTensor(tensors);
 
@@ -1483,17 +1484,17 @@ ProcessGroupACCL::recv(std::vector<at::Tensor> &tensors, int srcRank, int tag) {
                  c10::optional<std::vector<at::Tensor>>(tensors));
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::recvAnysource(std::vector<at::Tensor> &tensors, int tag) {
   TORCH_CHECK(false, "ProcessGroupACCL does not support recvAnysource");
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::barrier(const BarrierOptions &opts) {
   TORCH_CHECK(false, "ProcessGroupACCL does not support barrier");
 }
 
-c10::intrusive_ptr<ProcessGroup::Work>
+c10::intrusive_ptr<Work>
 ProcessGroupACCL::_allgather_base(at::Tensor & /*unused */,
                                   at::Tensor & /*unused */,
                                   const AllgatherOptions & /*unused */) {

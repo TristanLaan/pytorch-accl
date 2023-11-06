@@ -48,6 +48,7 @@ include_dirs = [root / 'include',  driver_dir / 'xrt' / 'include',
                 accl_utils_dir / 'include', xrt_dir / 'include',
                 root / 'accl' / 'test' / 'model' / 'zmq',
                 vnx_dir / 'include', roce_dir / 'include',
+                root / 'accl' / 'test' / 'refdesigns' / 'Coyote' / 'sw' / 'include',
                 '/usr/include/jsoncpp']
 library_dirs = [driver_dir / 'xrt' / 'lib', xrt_dir / 'lib']
 libraries = ['accl', 'jsoncpp', 'zmq']
