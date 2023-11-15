@@ -156,6 +156,11 @@ public:
       int device_index = 0, int nbufs = 16, uint64_t bufsize = 1024,
       bool rsfec = false);
 
+  void initialize();
+
+  std::vector<std::uint8_t> get_local_qp(unsigned int rank);
+  void set_remote_qp(unsigned int rank, std::vector<std::uint8_t> &qp);
+
   virtual ~ProcessGroupACCL();
 
   // Abort the ACCL program, needs to be called when exception is detected
@@ -292,10 +297,24 @@ protected:
 
 private:
   c10::intrusive_ptr<Store> store_;
+  std::vector<ACCL::rank_t> ranks_;
+  accl_network_utils::acclDesign design_;
+  int device_index_;
+  int nbufs_;
+  uint64_t bufsize_;
+  bool rsfec_;
+  bool simulator_;
+  const std::string xclbin_;
+
+  ACCL::CoyoteDevice *cyt_device;
+  std::vector<fpga::ibvQpConn*> ibvQpConn_vec;
+
   std::unique_ptr<ACCL::ACCL> accl;
   uint64_t bufsize;
   bool p2p_enabled;
+  bool coyote_enabled;
   std::map<ACCL::dataType, ACCL::dataType> compression;
+  bool initialized;
   xrt::bo buf0;
   xrt::bo buf1;
 };

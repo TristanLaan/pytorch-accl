@@ -37,7 +37,9 @@
 
 #include <accl.hpp>
 #include <accl_network_utils.hpp>
+#include "coyote_init.hpp"
 
+namespace cyt = coyote_init;
 namespace py = pybind11;
 
 namespace c10d {
@@ -496,6 +498,7 @@ bool check_arp(vnx::Networklayer &network_layer,
 
   return true;
 }
+
 } // namespace
 
 ACCL::dataType ProcessGroupACCL::get_compressed_type(c10::ScalarType datatype) {
@@ -568,8 +571,14 @@ ProcessGroupACCL::ProcessGroupACCL(
     const std::vector<int> &profiling_ranks, double profiling_timeout,
     const std::string &xclbin, accl_network_utils::acclDesign design,
     int device_index, int nbufs, uint64_t bufsize, bool rsfec)
-    : ProcessGroup(rank, size), store_(store), stop_(false), bufsize(bufsize),
-      p2p_enabled(p2p_enabled), compression(compression) {
+    : ProcessGroup(rank, size), store_(store), stop_(false),
+      device_index_(device_index), nbufs_(nbufs), bufsize_(bufsize),
+      rsfec_(rsfec), simulator_(simulator), xclbin_(xclbin),
+      bufsize(bufsize), p2p_enabled(p2p_enabled),
+      coyote_enabled(
+        design == accl_network_utils::acclDesign::CYT_RDMA
+        || design == accl_network_utils::acclDesign::CYT_TCP),
+      compression(compression), initialized(false) {
 
   if (std::find(profiling_ranks.begin(), profiling_ranks.end(), rank) !=
       profiling_ranks.end()) {
@@ -577,23 +586,77 @@ ProcessGroupACCL::ProcessGroupACCL(
         std::chrono::duration<double>(profiling_timeout));
   }
 
-  xrt::device device;
-  if (!simulator) {
-    device = xrt::device(device_index);
+  ranks_ = convert_ranks(ranks);
+
+  if (coyote_enabled) {
+    if (design == accl_network_utils::acclDesign::CYT_TCP) {
+      cyt_device = new ACCL::CoyoteDevice();
+    } else if (design == accl_network_utils::acclDesign::CYT_RDMA) {
+      cyt_device = new ACCL::CoyoteDevice(size_);
+      cyt::setup_cyt_rdma(ibvQpConn_vec, ranks_, rank_, *cyt_device);
+    } else {
+      throw std::runtime_error("Undefined ACCL design");
+    }
+  }
+}
+
+std::vector<std::uint8_t> ProcessGroupACCL::get_local_qp(unsigned int rank) {
+  std::vector<std::uint8_t> qp;
+  char *data = (char *) &ibvQpConn_vec[rank]->getQpairStruct()->local;
+  for (std::size_t i = 0; i < sizeof(fpga::ibvQ); ++i) {
+    qp.push_back(data[i]);
   }
 
-  accl = accl_network_utils::initialize_accl(convert_ranks(ranks), rank,
-                                             simulator, design, device, xclbin,
-                                             nbufs, bufsize, 0, rsfec);
-  int devicemem = accl->devicemem();
-  if (!simulator) {
-    // Initialize cache buffers
-    buf0 = xrt::bo(device, bufsize, devicemem);
-    buf1 = xrt::bo(device, bufsize, devicemem);
+  return qp;
+}
+
+void ProcessGroupACCL::set_remote_qp(unsigned int rank, std::vector<std::uint8_t> &qp) {
+  fpga::ibvQ remote_qp;
+  char *data = (char *) &remote_qp;
+  for (std::size_t i = 0; i < sizeof(fpga::ibvQ); ++i) {
+    data[i] = qp[i];
   }
+
+  ibvQpConn_vec[rank]->getQpairStruct()->remote = remote_qp;
+}
+
+void ProcessGroupACCL::initialize() {
+  xrt::device device;
+  if (initialized) {
+    throw std::runtime_error("Already initialized process group");
+  }
+
+  if (coyote_enabled) {
+    if (design_ == accl_network_utils::acclDesign::CYT_RDMA) {
+      cyt::configure_cyt_rdma(ibvQpConn_vec, ranks_, rank_);
+    } else {
+      throw std::runtime_error("Coyote configure not implemented");
+    }
+
+    accl = std::make_unique<ACCL::ACCL>(cyt_device, ranks_, rank_, size_ + 2,
+                                        bufsize, bufsize, 8388608UL);
+    ACCL::debug(std::string("[ACCL coyote] communicator: ") + accl->dump_communicator());
+  } else {
+    if (!simulator_) {
+      device = xrt::device(device_index_);
+    }
+
+    accl = accl_network_utils::initialize_accl(ranks_, rank_,
+                                               simulator_, design_, device,
+                                               xclbin_, nbufs_, bufsize, 0,
+                                               rsfec_);
+    int devicemem = accl->devicemem();
+    if (!simulator_) {
+      // Initialize cache buffers
+      buf0 = xrt::bo(device, bufsize, devicemem);
+      buf1 = xrt::bo(device, bufsize, devicemem);
+    }
+  }
+
   accl->set_timeout(1e8);
   // Start the worker thread accepting ACCL calls
   workerThread_ = std::thread(&ProcessGroupACCL::runLoop, this);
+  initialized = true;
 }
 
 ProcessGroupACCL::~ProcessGroupACCL() { destroy(); }
@@ -653,6 +716,10 @@ void ProcessGroupACCL::runLoop() {
 c10::intrusive_ptr<Work> ProcessGroupACCL::enqueue(
     std::unique_ptr<WorkEntry> entry, const char *profilingTitle, OpType optype,
     const c10::optional<std::vector<at::Tensor>> &inputTensors) {
+  if (!initialized) {
+    throw std::runtime_error("Process group not yet initialized, "
+                             "call accl_process_group.initialize()");
+  }
   auto work = c10::make_intrusive<WorkACCL>(entry->dst, profilingTitle, optype,
                                             inputTensors);
   std::unique_lock<std::mutex> lock(pgMutex_);
@@ -752,7 +819,7 @@ void ProcessGroupACCL::run_allreduce(at::Tensor tensor_original,
     data = create_and_copy_p2p_buffer(*accl, tensor_original);
     result = create_buffer_p2p(*accl, tensor->numel(), tensor->scalar_type());
   } else {
-    if (accl->is_simulated()) {
+    if (accl->is_simulated() || coyote_enabled) {
       data = create_buffer(*accl, tensor->numel(), tensor->scalar_type());
     } else {
       data = wrap_buffer(*accl, buf0, tensor->numel(), tensor->scalar_type());
@@ -1534,7 +1601,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              "UDP ACCL backend; uses VNx network kernel on hardware")
       .value("roce", accl_network_utils::acclDesign::ROCE,
              "Only applicable for hardware; uses UDP ACCL backend and RoCE "
-             "network kernel");
+             "network kernel")
+      .value("cyt_tcp", accl_network_utils::acclDesign::CYT_TCP,
+             "Only applicable for hardware; uses coyote ACCL backend with a "
+             "TCP network kernel")
+      .value("cyt_rdma", accl_network_utils::acclDesign::CYT_RDMA,
+             "Only applicable for hardware; uses coyote ACCL backend with a "
+             "RDMA network kernel");
 
   py::class_<ProcessGroupACCL::Rank,
              c10::intrusive_ptr<ProcessGroupACCL::Rank>>(m, "Rank")
@@ -1563,6 +1636,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::arg("xclbin") = std::string(),
            py::arg("device_index") = 0,  py::arg("nbufs") = 16,
            py::arg("bufsize") = 1024, py::arg("rsfec") = false)
+      .def("get_local_qp", &ProcessGroupACCL::get_local_qp, py::arg("rank"))
+      .def("set_remote_qp", &ProcessGroupACCL::set_remote_qp, py::arg("rank"),
+           py::arg("qp"))
+      .def("initialize", &ProcessGroupACCL::initialize)
       .def_property("compression", &ProcessGroupACCL::get_compression,
                     &ProcessGroupACCL::set_compression);
 }

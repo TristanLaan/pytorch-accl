@@ -52,9 +52,10 @@ include_dirs = [root / 'include',  driver_dir / 'xrt' / 'include',
                 '/usr/include/jsoncpp']
 library_dirs = [driver_dir / 'xrt' / 'lib', xrt_dir / 'lib']
 libraries = ['accl', 'jsoncpp', 'zmq']
-sources = [root / 'src' / 'ProcessGroupACCL.cpp', vnx_dir / 'src' / 'cmac.cpp',
-           vnx_dir / 'src' / 'networklayer.cpp', roce_dir / 'src' / 'cmac.cpp',
-           roce_dir / 'src' / 'hivenet.cpp',
+sources = [root / 'src' / 'ProcessGroupACCL.cpp',
+           root / 'src' / 'coyote_init.cpp',
+           vnx_dir / 'src' / 'cmac.cpp', vnx_dir / 'src' / 'networklayer.cpp',
+           roce_dir / 'src' / 'cmac.cpp', roce_dir / 'src' / 'hivenet.cpp',
            accl_utils_dir / 'src' / 'accl_network_utils.cpp']
 
 compile_args = ['-Wno-reorder',
