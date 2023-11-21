@@ -39,9 +39,9 @@ xrt_dir = Path(os.environ['XILINX_XRT'])
 
 driver_dir = root / 'accl' / 'driver'
 accl_utils_dir = driver_dir / 'utils' / 'accl_network_utils'
-vnx_dir = root / 'accl' / 'test' / 'hardware' / 'xup_vitis_network_example' \
+vnx_dir = root / 'accl' / 'test' / 'refdesigns' / 'xup_vitis_network_example' \
     / 'xrt_host_api'
-roce_dir = root / 'accl' / 'test' / 'hardware' / 'HiveNet' \
+roce_dir = root / 'accl' / 'test' / 'refdesigns' / 'HiveNet' \
     / 'network' / 'roce_v2' / 'xrt_utils'
 
 include_dirs = [root / 'include',  driver_dir / 'xrt' / 'include',
