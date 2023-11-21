@@ -276,6 +276,7 @@ protected:
                   const GatherOptions &opts);
   void run_scatter(std::vector<at::Tensor> &srctensors, at::Tensor dsttensor,
                    const ScatterOptions &opts);
+  void run_alltoall(at::Tensor srctensor, at::Tensor dsttensor, const AllToAllOptions &opts);
 
   ACCL::dataType get_compressed_type(c10::ScalarType datatype);
 

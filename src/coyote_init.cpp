@@ -81,7 +81,7 @@ void setup_cyt_rdma(std::vector<fpga::ibvQpConn *> &ibvQpConn_vec,
   uint32_t n_pages = 1;
   for (int i = 0; i < ranks.size(); i++) {
     fpga::ibvQpConn *qpConn = new fpga::ibvQpConn(
-        device.coyote_qProc_vec[i]->getVfid(), ranks[local_rank].ip, n_pages);
+        device.coyote_qProc_vec[i], ranks[local_rank].ip, n_pages);
     ibvQpConn_vec.push_back(qpConn);
   }
 }

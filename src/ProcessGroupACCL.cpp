@@ -1398,11 +1398,119 @@ c10::intrusive_ptr<Work> ProcessGroupACCL::reduce_scatter(
   TORCH_CHECK(false, "ProcessGroupACCL does not support reduce_scatter");
 }
 
+void ProcessGroupACCL::run_alltoall(at::Tensor srctensor_original,
+                                    at::Tensor dsttensor_original,
+                                    const AllToAllOptions &opts) {
+  at::Tensor *srctensor = &srctensor_original;
+  at::Tensor *dsttensor = &dsttensor_original;
+  at::Tensor empty_srctensor, empty_dsttensor;
+  std::unique_ptr<ACCL::BaseBuffer> srcdata;
+  std::unique_ptr<ACCL::BaseBuffer> dstdata;
+
+  // Reserve device
+  c10::DeviceGuard guard(srctensor->device());
+  std::unique_lock<std::mutex> globalLock(pgGlobalMutex_);
+
+  // Copy data from GPU to FPGA if necessary, and create a new result buffer,
+  // since ACCL doesn't support in-place allreduce
+  if (p2p_applicable(*accl, srctensor_original, p2p_enabled)) {
+    srcdata = create_and_copy_p2p_buffer(*accl, srctensor_original);
+  } else {
+    if (accl->is_simulated() || coyote_enabled) {
+      srcdata = create_buffer(*accl, srctensor->numel(), srctensor->scalar_type());
+    } else {
+      srcdata = wrap_buffer(*accl, buf0, srctensor->numel(), srctensor->scalar_type());
+    }
+    ACCL::debug("Copying data to aligned CPU tensor of size " +
+                std::to_string(srctensor_original.numel()));
+    empty_srctensor = torch::from_blob(
+        srcdata->byte_array(), srctensor_original.sizes(),
+        srctensor_original.options().device(c10::DeviceType::CPU));
+    srctensor = &empty_srctensor;
+    srctensor->copy_(srctensor_original);
+    ACCL::debug("Creating extra result buffer of size " +
+                std::to_string(srctensor_original.numel()));
+  }
+
+  // Create output buffer
+  if (p2p_applicable(*accl, dsttensor_original, p2p_enabled)) {
+    dstdata = create_and_copy_p2p_buffer(*accl, dsttensor_original);
+  } else {
+    if (accl->is_simulated() || coyote_enabled) {
+      dstdata = create_buffer(*accl, dsttensor->numel(), dsttensor->scalar_type());
+    } else {
+      dstdata = wrap_buffer(*accl, buf0, dsttensor->numel(), dsttensor->scalar_type());
+    }
+  }
+
+  // Run alltoall
+  ACCL::debug("Starting alltoall of " + std::to_string(srctensor->numel()) +
+              " items");
+  accl->alltoall(*srcdata, *dstdata, srctensor->numel(),
+                  ACCL::GLOBAL_COMM, false, false,
+                  get_compressed_type(srctensor->scalar_type()));
+  int retcode = accl->get_retcode();
+  if (retcode) {
+    TORCH_CHECK(false, ACCL_ERROR(retcode));
+  }
+
+  // Copy result buffer back to original tensor
+  if (p2p_applicable(*accl, dsttensor_original, p2p_enabled)) {
+    copy_back_p2p_buffer(*dstdata, dsttensor_original);
+  } else {
+    ACCL::debug("Copying result data back to original tensor of size " +
+                std::to_string(dsttensor_original.numel()));
+    dsttensor_original.copy_(torch::from_blob(
+        dstdata->byte_array(), dsttensor_original.sizes(),
+        dsttensor_original.options().device(c10::DeviceType::CPU)));
+  }
+}
+
 c10::intrusive_ptr<Work> ProcessGroupACCL::alltoall_base(
     at::Tensor &outputTensor, at::Tensor &inputTensor,
     std::vector<int64_t> &outputSplitSizes,
     std::vector<int64_t> &inputSplitSizes, const AllToAllOptions &opts) {
-  TORCH_CHECK(false, "ProcessGroupACCL does not support alltoall_base");
+  if (outputSplitSizes.size() == 0 && inputSplitSizes.size() == 0) {
+    // We can use alltoall
+    TORCH_CHECK(
+        outputTensor.numel() == inputTensor.numel() &&
+            outputTensor.type() == inputTensor.type(),
+        "Tensors are not equal in size or data type");
+    TORCH_CHECK(
+        outputTensor.size(0) % size_ == 0,
+        "Tensor's dim 0 does not divide equally across group size");
+
+    std::function<void(std::unique_ptr<WorkEntry>&)> runFunc =
+        [opts, this](std::unique_ptr<WorkEntry>& entry) {
+          auto srctensor = (entry->src)[0];
+          auto dsttensor = (entry->dst)[0];
+          c10::DeviceGuard guard(srctensor.device());
+          std::unique_lock<std::mutex> globalLock(pgGlobalMutex_);
+          // Segment data if necessary
+          if (dsttensor.nbytes() > bufsize) {
+            ACCL::debug("dsttensor to large!");
+            size_t n = bufsize / dsttensor.itemsize();
+            for (size_t i = 0; i < dsttensor.numel(); i += n) {
+              ACCL::debug("part " + std::to_string(i) + "!");
+              size_t end =
+                  std::min(i + n, static_cast<size_t>(dsttensor.numel()));
+              run_alltoall(srctensor.slice(0, i, end), dsttensor.slice(0, i, end), opts);
+            }
+          } else {
+            run_alltoall(srctensor, dsttensor, opts);
+          }
+        };
+    std::vector<at::Tensor> inputTensors = {inputTensor};
+    std::vector<at::Tensor> outputTensors = {outputTensor};
+    auto entry = std::make_unique<WorkEntry>(
+        &inputTensors, &outputTensors, std::move(runFunc));
+    return enqueue(
+        std::move(entry),
+        "accl:all_to_all_base", OpType::ALLTOALL_BASE,
+        c10::optional<std::vector<at::Tensor>>(inputTensors));
+  } else {
+    TORCH_CHECK(false, "ProcessGroupACCL does not support alltoallv required by alltoall_base");
+  }
 }
 
 c10::intrusive_ptr<Work>
