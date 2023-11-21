@@ -149,9 +149,7 @@ def configure_cyt_rdma(ranks):
 
 
 
-def start_test(simulator: bool, *,
-               xclbin: Optional[str] = None,
-               device_index: Optional[int] = None):
+def start_test(simulator: bool):
     global rank, size
     if 'MASTER_ADDR' not in os.environ:
         os.environ['MASTER_ADDR'] = 'localhost'
@@ -196,12 +194,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--simulation', action='store_true',
                         default=False, help='Use simulation instead of '
                                             'hardware')
-    parser.add_argument('--device-index', type=int, default=0,
-                        help='Device index of fpga')
 
     args = parser.parse_args()
 
-    start_test(
-        args.simulation,
-        xclbin=args.xclbin,
-        device_index=args.device_index)
+    start_test(args.simulation)
