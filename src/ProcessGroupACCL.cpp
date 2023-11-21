@@ -876,7 +876,7 @@ void ProcessGroupACCL::run_allreduce(at::Tensor tensor_original,
     tensor->copy_(tensor_original);
     ACCL::debug("Creating extra result buffer of size " +
                 std::to_string(tensor_original.numel()));
-    if (accl->is_simulated()) {
+    if (accl->is_simulated() || coyote_enabled) {
       result = create_buffer(*accl, tensor->numel(), tensor->scalar_type());
     } else {
       result = wrap_buffer(*accl, buf1, tensor->numel(), tensor->scalar_type());
@@ -898,7 +898,7 @@ void ProcessGroupACCL::run_allreduce(at::Tensor tensor_original,
   }
 
   if (!coyote_enabled) {
-    data->sync_from_device();
+    result->sync_from_device();
   }
 
   // Copy result buffer back to original tensor
@@ -1014,7 +1014,7 @@ void ProcessGroupACCL::run_reduce(at::Tensor tensor_original,
   }
 
   if (!coyote_enabled && rank_ == opts.rootRank) {
-    data->sync_from_device();
+    result->sync_from_device();
   }
 
   // Copy result buffer back to original tensor
